@@ -257,16 +257,48 @@ class GTFSValidator:
                 timeout=300  # 5 minutes
             )
 
-            if result.returncode == 0:
-                print("\n✅ Canonical validation completed successfully!")
-                print(f"\n📄 Validation report: {output_dir}/report.html")
-                self._add_info("Canonical validation passed")
+            # Check the validation report for errors
+            report_json = Path(output_dir) / "report.json"
+
+            if result.returncode == 0 and report_json.exists():
+                # Parse the report to check for actual validation errors
+                import json
+                try:
+                    with open(report_json) as f:
+                        report = json.load(f)
+
+                    notices = report.get("notices", [])
+                    error_count = sum(1 for n in notices if n.get("severity") == "ERROR")
+                    warning_count = sum(1 for n in notices if n.get("severity") == "WARNING")
+
+                    print(f"\n📊 Validation Results:")
+                    print(f"  Errors: {error_count}")
+                    print(f"  Warnings: {warning_count}")
+                    print(f"\n📄 Validation report: {output_dir}/report.html")
+
+                    if error_count > 0:
+                        self._add_error(f"Canonical validator found {error_count} errors")
+                        print(f"\n❌ Validation FAILED with {error_count} errors")
+                        return False
+                    else:
+                        print(f"\n✅ Canonical validation passed!")
+                        self._add_info("Canonical validation passed")
+                        return True
+
+                except json.JSONDecodeError as e:
+                    print(f"\n⚠️  Could not parse validation report: {e}")
+                    return False
+            elif result.returncode == 0:
+                print("\n✅ Canonical validation completed!")
+                print(f"📄 Validation report: {output_dir}/report.html")
+                self._add_info("Canonical validation completed")
                 return True
             else:
-                print(f"\n⚠️  Validation completed with issues")
+                print(f"\n⚠️  Validation process failed")
                 print(f"📄 See detailed report: {output_dir}/report.html")
                 if result.stderr:
                     print(f"Error output: {result.stderr}")
+                self._add_error("Canonical validator process failed")
                 return False
 
         except subprocess.TimeoutExpired:
@@ -452,8 +484,9 @@ def main():
     validator.validate_with_gtfs_kit()
 
     # Canonical validator (if requested)
+    canonical_passed = True
     if args.run_canonical:
-        validator.run_canonical_validator(
+        canonical_passed = validator.run_canonical_validator(
             validator_jar=args.validator_jar,
             country_code=args.country
         )
@@ -461,11 +494,15 @@ def main():
     # Print summary
     success = validator.print_summary()
 
-    if success:
+    # Check both print_summary and canonical validator results
+    if success and canonical_passed:
         print("\n✅ Validation passed!")
         sys.exit(0)
     else:
-        print("\n❌ Validation failed with errors")
+        if not canonical_passed:
+            print("\n❌ Canonical validation failed")
+        if not success:
+            print("\n❌ Validation failed with errors")
         sys.exit(1)
 
 

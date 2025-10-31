@@ -132,12 +132,23 @@ def main():
             validator.validate_with_gtfs_kit()
 
             # Canonical validator
+            canonical_passed = True
             if args.run_canonical_validator:
-                validator.run_canonical_validator(country_code="sg")
+                canonical_passed = validator.run_canonical_validator(country_code="sg")
 
-            # Print summary
-            validator.print_summary()
+            # Print summary and check for errors
+            validation_passed = validator.print_summary()
 
+            # Exit with error if validation failed
+            if not validation_passed:
+                print("\n❌ GTFS validation failed with errors")
+                sys.exit(1)
+
+            if args.run_canonical_validator and not canonical_passed:
+                print("\n❌ Canonical validation failed")
+                sys.exit(1)
+
+            print("\n✅ All validation checks passed!")
             print("\n💡 For comprehensive validation, use the canonical validator:")
             print("   python gtfs_validator.py gtfs_output --download-validator")
             print("   python gtfs_validator.py gtfs_output --run-canonical")
