@@ -1,0 +1,126 @@
+name: Nightly GTFS Feed Generation
+
+on:
+  # Run at 4am Singapore time (20:00 UTC, since SGT is UTC+8)
+  schedule:
+    - cron: "0 20 * * *"
+
+  # Allow manual trigger
+  workflow_dispatch:
+
+env:
+  PYTHON_VERSION: "3.11"
+  VALIDATOR_VERSION: "7.1.0"
+
+jobs:
+  build-and-validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Set up Java (for GTFS validator)
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "21"
+
+      - name: Download GTFS validator
+        run: |
+          if [ ! -f "gtfs-validator-${{ env.VALIDATOR_VERSION }}-cli.jar" ]; then
+            wget "https://github.com/MobilityData/gtfs-validator/releases/download/v${{ env.VALIDATOR_VERSION }}/gtfs-validator-${{ env.VALIDATOR_VERSION }}-cli.jar"
+          fi
+
+      - name: Generate GTFS feed
+        env:
+          LTA_API_KEY: ${{ secrets.LTA_API_KEY }}
+        run: |
+          python build_gtfs.py --save-cache --validate
+
+      - name: Run canonical validator
+        run: |
+          python gtfs_validator.py gtfs_output \
+            --run-canonical \
+            --validator-jar "gtfs-validator-${{ env.VALIDATOR_VERSION }}-cli.jar" \
+            --country sg
+
+      - name: Check validation results
+        run: |
+          # Check if validation report exists
+          if [ -f "validation_output/report.json" ]; then
+            # Extract error count from report
+            ERROR_COUNT=$(python -c "import json; report = json.load(open('validation_output/report.json')); print(sum(1 for n in report.get('notices', []) if n.get('severity') == 'ERROR'))")
+            echo "Validation errors found: $ERROR_COUNT"
+
+            if [ "$ERROR_COUNT" -gt 0 ]; then
+              echo "❌ GTFS validation failed with $ERROR_COUNT errors"
+              exit 1
+            else
+              echo "✅ GTFS validation passed!"
+            fi
+          else
+            echo "⚠️ Validation report not found"
+            exit 1
+          fi
+
+      - name: Get feed statistics
+        run: |
+          python -c "
+          import json
+          with open('validation_output/report.json') as f:
+              report = json.load(f)
+
+          summary = report.get('summary', {})
+          counts = summary.get('counts', {})
+
+          print('📊 GTFS Feed Statistics:')
+          print(f\"  Routes: {counts.get('Routes', 0)}\")
+          print(f\"  Stops: {counts.get('Stops', 0)}\")
+          print(f\"  Trips: {counts.get('Trips', 0)}\")
+          print(f\"  Agencies: {counts.get('Agencies', 0)}\")
+
+          notices = report.get('notices', [])
+          error_count = sum(1 for n in notices if n.get('severity') == 'ERROR')
+          warning_count = sum(1 for n in notices if n.get('severity') == 'WARNING')
+
+          print(f\"\n📋 Validation Summary:\")
+          print(f\"  Errors: {error_count}\")
+          print(f\"  Warnings: {warning_count}\")
+          "
+
+      - name: Package GTFS feed
+        run: |
+          # Create a dated archive
+          DATE=$(date +%Y%m%d)
+          cd gtfs_output
+          zip -r "../gtfs-sg-${DATE}.zip" *.txt
+          cd ..
+
+      - name: Upload GTFS feed artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gtfs-feed-${{ github.run_number }}
+          path: |
+            gtfs-sg-*.zip
+            validation_output/report.html
+            validation_output/report.json
+          retention-days: 30
+
+      - name: Upload validation report
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-report-${{ github.run_number }}
+          path: validation_output/
+          retention-days: 30

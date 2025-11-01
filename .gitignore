@@ -1,0 +1,57 @@
+# Python
+__pycache__/
+*.py[cod]
+**/__pycache__/
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment variables
+.env
+
+# GTFS Output
+gtfs_output/
+
+# API Cache
+api_cache/
+
+# Validation Output
+validation_output/
+
+# GTFS Validator JAR
+gtfs-validator-*.jar
+
+# Temporary GTFS zips
+temp_gtfs.zip
+gtfs-sg-*.zip
+
+# OS
+.DS_Store
+Thumbs.db
