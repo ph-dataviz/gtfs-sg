@@ -4,20 +4,29 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a GTFS (General Transit Feed Specification) feed builder for Singapore's public bus system. It fetches data from the LTA (Land Transport Authority) DataMall API and generates a production-ready, validated GTFS feed.
+This is a GTFS (General Transit Feed Specification) feed builder for Singapore's public transport system. It combines:
+- **Bus data** from the LTA (Land Transport Authority) DataMall API
+- **Train data** (MRT/LRT) from LTA static shapefiles and manual route data
 
-**Key accomplishment**: Feed is production-ready with Grade A+ validation (0 errors, only 2 minor cosmetic warnings).
+The system generates a production-ready, validated GTFS feed covering Singapore's entire public transit network.
+
+**Key accomplishment**: Combined bus+train feed is production-ready with successful validation.
 
 ## Architecture
 
 ### Data Flow Pipeline
 
 ```
-LTA DataMall API → API Client (with caching) → GTFS Generator → Validation → Output
+Bus: LTA DataMall API → API Client (with caching) → GTFS Generator → Validation → Output
+Train: Static Files → Data Loader → GTFS Generator → Validation → Output
 ```
 
-1. **LTA API Client** (`lta_api_client.py`): Handles paginated API calls ($skip parameter, 500 records per page) with optional JSON caching
-2. **GTFS Generator** (`gtfs_generator.py`): Transforms LTA data to GTFS format with critical fixes applied
+1. **LTA API Client** (`lta_api_client.py`):
+   - Handles paginated API calls ($skip parameter, 500 records per page) with optional JSON caching
+   - Loads train data from static CSV files (`static_data/`)
+2. **GTFS Generator** (`gtfs_generator.py`):
+   - Transforms LTA data to GTFS format with critical fixes applied
+   - Merges bus and train data into unified GTFS feed
 3. **Validator** (`gtfs_validator.py`): Multi-level validation (basic structure, gtfs-kit, canonical MobilityData validator)
 
 ### Critical Implementation Details
@@ -146,7 +155,25 @@ All configuration is in `config.py`:
   - mixed_case_recommended_field (6 occurrences) - actual LTA stop names
   - same_name_and_description_for_stop (4 occurrences) - limited LTA metadata
 
-**All critical fixes documented in**: `FIXES_APPLIED.md`
+**All critical fixes documented in**:
+- `FIXES_APPLIED.md` - GTFS compliance fixes
+- `VALIDATION_EXIT_CODE_FIX.md` - Exit code handling for CI/CD
+
+### Exit Code Behavior (P1 Fix - 2025-10-31)
+
+**CRITICAL**: Validation scripts now properly fail with exit code 1 when errors are detected.
+
+The canonical validator (gtfs_validator.py:260-302) now:
+1. Parses `report.json` to check for ERROR-level notices
+2. Returns `False` when errors are found (not just when Java process fails)
+3. Properly fails builds in CI/CD pipelines
+
+Both `build_gtfs.py` and `gtfs_validator.py` now:
+- Check return values from validation methods
+- Exit with `sys.exit(1)` when validation fails
+- Display clear error messages before exiting
+
+This ensures GitHub Actions and other automation properly detect validation failures.
 
 ## Key Files
 
@@ -223,9 +250,36 @@ API key can be set via:
 
 **Never commit API keys to repository.**
 
+## Train Data Integration
+
+**NEW**: The feed now includes Singapore's MRT/LRT train network alongside buses.
+
+### Train Data Sources
+- **Station locations**: LTA shapefile (`TrainStation_Aug2025.zip`)
+- **Station codes**: Manual mapping from Wikipedia/official sources
+- **Route sequences**: Manually created based on official line maps
+- **Line definitions**: 12 lines (NSL, EWL, CG, NEL, CCL, DTL, TEL, BP, SW, SE, PW, PE)
+
+### Train Files
+- `generate_train_data.py`: Generates train CSV files
+- `create_station_mapping.py`: Creates station code mapping
+- `static_data/train_stations.csv`: 282 stations with coordinates
+- `static_data/train_lines.csv`: 12 train lines with colors
+- `static_data/train_routes.csv`: 222 station stops
+- `static_data/station_code_mapping.csv`: 220 code-to-name mappings
+
+### Train Parameters
+- **Average speed**: 40 km/h (vs 25 km/h for buses)
+- **Dwell time**: 0.5 minutes (vs 1 minute for buses)
+- **Service start**: 05:00 (vs 06:00 for buses)
+- **Route type**: 1 (Subway/Metro) in GTFS
+
+See `TRAIN_INTEGRATION.md` for complete documentation.
+
 ## Documentation
 
 - `README.md`: User-facing usage guide
+- `TRAIN_INTEGRATION.md`: Train data integration documentation
 - `VALIDATION_GUIDE.md`: Comprehensive validation documentation
 - `FIXES_APPLIED.md`: Detailed documentation of all validation fixes
 - `GITHUB_ACTIONS_SETUP.md`: GitHub Actions configuration guide
@@ -234,12 +288,12 @@ API key can be set via:
 ## Output
 
 Generated GTFS files in `gtfs_output/`:
-- `agency.txt` (1 agency)
-- `stops.txt` (5,175 stops)
-- `routes.txt` (580 unique routes, deduplicated)
-- `trips.txt` (757 trips, both directions)
-- `stop_times.txt` (realistic times based on distances)
+- `agency.txt` (1 agency: LTA)
+- `stops.txt` (5,457 stops: 5,175 bus + 282 train)
+- `routes.txt` (592 routes: 580 bus + 12 train lines)
+- `trips.txt` (781 trips: 757 bus + 24 train)
+- `stop_times.txt` (26,565 stop times with realistic travel times)
 - `calendar.txt` (1 year validity, daily service)
 - `feed_info.txt` (with contact information)
 
-Total feed size: ~1.3 MB
+Total feed size: ~1.5 MB (buses + trains)

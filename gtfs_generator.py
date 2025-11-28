@@ -73,17 +73,18 @@ class GTFSGenerator:
         ]]
         self._write_csv("agency.txt", headers, rows)
 
-    def generate_stops_txt(self, bus_stops: List[Dict[str, Any]]):
-        """Generate stops.txt from bus stops data.
+    def generate_stops_txt(self, bus_stops: List[Dict[str, Any]], train_stations: List[Dict[str, Any]] = None):
+        """Generate stops.txt from bus stops and train stations data.
 
         Args:
             bus_stops: List of bus stop dictionaries from LTA API
+            train_stations: Optional list of train station dictionaries from static data
         """
         print("\nGenerating stops.txt...")
         headers = ["stop_id", "stop_code", "stop_name", "stop_desc", "stop_lat", "stop_lon"]
         rows = []
 
-        # Build stop coordinates cache for distance calculations
+        # Add bus stops
         for stop in bus_stops:
             stop_code = stop["BusStopCode"]
             self.stop_coordinates[stop_code] = (stop["Latitude"], stop["Longitude"])
@@ -97,18 +98,35 @@ class GTFSGenerator:
                 stop["Longitude"]
             ])
 
+        # Add train stations
+        if train_stations:
+            for station in train_stations:
+                station_code = station["station_code"]
+                self.stop_coordinates[station_code] = (station["latitude"], station["longitude"])
+
+                rows.append([
+                    station_code,
+                    station_code,
+                    station["station_name"],
+                    station.get("station_type", "MRT"),
+                    station["latitude"],
+                    station["longitude"]
+                ])
+
         self._write_csv("stops.txt", headers, rows)
 
-    def generate_routes_txt(self, bus_services: List[Dict[str, Any]]):
-        """Generate routes.txt from bus services data.
+    def generate_routes_txt(self, bus_services: List[Dict[str, Any]], train_lines: List[Dict[str, Any]] = None):
+        """Generate routes.txt from bus services and train lines data.
 
         Args:
             bus_services: List of bus service dictionaries from LTA API
+            train_lines: Optional list of train line dictionaries from static data
         """
         print("\nGenerating routes.txt...")
-        headers = ["route_id", "agency_id", "route_short_name", "route_long_name", "route_type"]
+        headers = ["route_id", "agency_id", "route_short_name", "route_long_name", "route_type", "route_color", "route_text_color"]
         rows = []
 
+        # Add bus routes
         # Deduplicate routes - only one route per service number
         seen_routes = set()
         for service in bus_services:
@@ -125,21 +143,38 @@ class GTFSGenerator:
                 "LTA",
                 service["ServiceNo"],
                 f"Bus {service['ServiceNo']} ({service.get('Operator', 'LTA')})",
-                "3"  # Bus
+                "3",  # Bus
+                "",   # No color for buses
+                ""    # No text color
             ])
+
+        # Add train routes
+        if train_lines:
+            for line in train_lines:
+                rows.append([
+                    line["line_code"],
+                    "LTA",
+                    line["line_code"],
+                    line["line_name"],
+                    "1",  # Subway/Metro (GTFS standard for MRT/LRT)
+                    line.get("color", ""),
+                    line.get("text_color", "")
+                ])
 
         self._write_csv("routes.txt", headers, rows)
 
     def generate_trips_and_stop_times(
         self,
         bus_routes: List[Dict[str, Any]],
-        bus_services: List[Dict[str, Any]]
+        bus_services: List[Dict[str, Any]],
+        train_routes: List[Dict[str, Any]] = None
     ):
-        """Generate trips.txt and stop_times.txt from bus routes data.
+        """Generate trips.txt and stop_times.txt from bus routes and train routes data.
 
         Args:
             bus_routes: List of bus route dictionaries from LTA API
             bus_services: List of bus service dictionaries from LTA API
+            train_routes: Optional list of train route stop sequences from static data
         """
         print("\nGenerating trips.txt and stop_times.txt...")
 
@@ -243,6 +278,91 @@ class GTFSGenerator:
                 # Add dwell time for next calculation
                 cumulative_time_minutes += dwell_time_minutes
 
+        # Process train routes
+        if train_routes:
+            # Group train routes by line
+            train_routes_by_line = {}
+            for route in train_routes:
+                line_code = route["line_code"]
+                if line_code not in train_routes_by_line:
+                    train_routes_by_line[line_code] = []
+                train_routes_by_line[line_code].append(route)
+
+            # Sort by stop_sequence
+            for line_code in train_routes_by_line:
+                train_routes_by_line[line_code].sort(key=lambda x: x["stop_sequence"])
+
+            # Generate trips and stop_times for trains
+            for line_code, stations in train_routes_by_line.items():
+                # Create trips for both directions
+                for direction in [0, 1]:
+                    trip_id = f"{line_code}_dir{direction}"
+
+                    # Determine station order based on direction
+                    ordered_stations = stations if direction == 0 else list(reversed(stations))
+
+                    # Get destination
+                    dest_station_code = ordered_stations[-1]["station_code"]
+
+                    trip_rows.append([
+                        line_code,
+                        "DAILY",
+                        trip_id,
+                        f"To {dest_station_code}",
+                        direction
+                    ])
+
+                    # Generate stop_times for this trip
+                    cumulative_time_minutes = 0
+                    start_hour = 5  # Trains start earlier
+                    average_speed_kmh = 40  # Trains are faster than buses
+                    dwell_time_minutes = 0.5  # Shorter dwell time for trains
+
+                    for idx, station_info in enumerate(ordered_stations):
+                        station_code = station_info["station_code"]
+
+                        # Calculate travel time from previous station
+                        if idx > 0:
+                            prev_station_code = ordered_stations[idx - 1]["station_code"]
+
+                            # Get coordinates from cache
+                            if prev_station_code in self.stop_coordinates and station_code in self.stop_coordinates:
+                                prev_lat, prev_lon = self.stop_coordinates[prev_station_code]
+                                curr_lat, curr_lon = self.stop_coordinates[station_code]
+
+                                # Calculate distance in km
+                                distance_km = self._haversine_distance(prev_lat, prev_lon, curr_lat, curr_lon)
+
+                                # Calculate travel time in minutes
+                                travel_time_minutes = (distance_km / average_speed_kmh) * 60
+
+                                # Add minimum time between stations
+                                travel_time_minutes = max(travel_time_minutes, 1.5)
+
+                                cumulative_time_minutes += travel_time_minutes
+                            else:
+                                # Fallback if coordinates not found
+                                cumulative_time_minutes += 2
+
+                        # Arrival time
+                        arrival_minutes = int(cumulative_time_minutes)
+                        arrival_time = self._format_time(start_hour * 60 + arrival_minutes)
+
+                        # Departure time (arrival + dwell time)
+                        departure_minutes = int(cumulative_time_minutes + dwell_time_minutes)
+                        departure_time = self._format_time(start_hour * 60 + departure_minutes)
+
+                        stop_time_rows.append([
+                            trip_id,
+                            arrival_time,
+                            departure_time,
+                            station_code,
+                            idx + 1  # stop_sequence
+                        ])
+
+                        # Add dwell time for next calculation
+                        cumulative_time_minutes += dwell_time_minutes
+
         self._write_csv("trips.txt", trip_headers, trip_rows)
         self._write_csv("stop_times.txt", stop_time_headers, stop_time_rows)
 
@@ -313,23 +433,29 @@ class GTFSGenerator:
         self,
         bus_stops: List[Dict[str, Any]],
         bus_services: List[Dict[str, Any]],
-        bus_routes: List[Dict[str, Any]]
+        bus_routes: List[Dict[str, Any]],
+        train_stations: List[Dict[str, Any]] = None,
+        train_lines: List[Dict[str, Any]] = None,
+        train_routes: List[Dict[str, Any]] = None
     ):
-        """Generate complete GTFS feed.
+        """Generate complete GTFS feed with both bus and train data.
 
         Args:
             bus_stops: List of bus stop dictionaries
             bus_services: List of bus service dictionaries
             bus_routes: List of bus route dictionaries
+            train_stations: Optional list of train station dictionaries
+            train_lines: Optional list of train line dictionaries
+            train_routes: Optional list of train route stop sequences
         """
         print("\n" + "=" * 60)
         print("GENERATING GTFS FEED")
         print("=" * 60)
 
         self.generate_agency_txt()
-        self.generate_stops_txt(bus_stops)
-        self.generate_routes_txt(bus_services)
-        self.generate_trips_and_stop_times(bus_routes, bus_services)
+        self.generate_stops_txt(bus_stops, train_stations)
+        self.generate_routes_txt(bus_services, train_lines)
+        self.generate_trips_and_stop_times(bus_routes, bus_services, train_routes)
         self.generate_calendar_txt()
         self.generate_feed_info_txt()
 

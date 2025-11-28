@@ -45,6 +45,8 @@ api_cache/
 # Validation Output
 validation_output/
 
+docs/
+
 # GTFS Validator JAR
 gtfs-validator-*.jar
 
@@ -55,3 +57,4 @@ gtfs-sg-*.zip
 # OS
 .DS_Store
 Thumbs.db
+

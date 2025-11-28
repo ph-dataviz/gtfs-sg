@@ -1,0 +1,13 @@
+line_code,line_name,color,text_color
+NSL,North-South Line,FF0000,FFFFFF
+EWL,East-West Line,009645,FFFFFF
+CG,Changi Extension,009645,FFFFFF
+NEL,North East Line,9900AA,FFFFFF
+CCL,Circle Line,FA9E0D,000000
+DTL,Downtown Line,005EC4,FFFFFF
+TEL,Thomson-East Coast Line,9D5B25,FFFFFF
+BP,Bukit Panjang LRT,748477,FFFFFF
+SW,Sengkang LRT West Loop,748477,FFFFFF
+SE,Sengkang LRT East Loop,748477,FFFFFF
+PW,Punggol LRT West Loop,748477,FFFFFF
+PE,Punggol LRT East Loop,748477,FFFFFF

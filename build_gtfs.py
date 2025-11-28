@@ -82,6 +82,12 @@ def main():
         bus_services = client.get_bus_services(save_cache=args.save_cache)
         bus_routes = client.get_bus_routes(save_cache=args.save_cache)
 
+        # Load train data from static files
+        print("\n🚆 Loading train data from static files...")
+        train_stations = client.get_train_stations()
+        train_lines = client.get_train_lines()
+        train_routes = client.get_train_routes()
+
         # Validate data
         if not bus_stops:
             print("❌ Error: No bus stops data retrieved")
@@ -93,14 +99,20 @@ def main():
             print("❌ Error: No bus routes data retrieved")
             sys.exit(1)
 
-        print(f"\n✅ Data fetching complete:")
+        print(f"\n✅ Data loading complete:")
         print(f"   - Bus Stops: {len(bus_stops)}")
         print(f"   - Bus Services: {len(bus_services)}")
         print(f"   - Bus Routes: {len(bus_routes)}")
+        print(f"   - Train Stations: {len(train_stations)}")
+        print(f"   - Train Lines: {len(train_lines)}")
+        print(f"   - Train Route Stops: {len(train_routes)}")
 
-        # Generate GTFS feed
+        # Generate GTFS feed with both bus and train data
         generator = GTFSGenerator(output_dir=args.output_dir)
-        generator.generate_gtfs_feed(bus_stops, bus_services, bus_routes)
+        generator.generate_gtfs_feed(
+            bus_stops, bus_services, bus_routes,
+            train_stations, train_lines, train_routes
+        )
 
         print("\n✅ GTFS feed generation completed successfully!")
         print(f"\n📁 GTFS files are available in: {args.output_dir}")

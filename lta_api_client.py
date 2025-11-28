@@ -1,7 +1,9 @@
-"""Client for LTA DataMall API."""
+"""Client for LTA DataMall API and static train data."""
 
 import requests
 import time
+import pandas as pd
+import os
 from typing import List, Dict, Any, Optional
 import config
 from api_cache import APICache
@@ -160,3 +162,91 @@ class LTADataMallClient:
             self.cache.save("bus_routes", data)
 
         return data
+
+    def get_train_stations(self) -> List[Dict[str, Any]]:
+        """Load train station data from static CSV file.
+
+        Returns:
+            List of train station dictionaries with coordinates
+        """
+        print("\n=== Loading Train Stations ===")
+        station_file = os.path.join("static_data", "train_stations.csv")
+        mapping_file = os.path.join("static_data", "station_code_mapping.csv")
+
+        if not os.path.exists(station_file):
+            print(f"Warning: {station_file} not found. Run generate_train_data.py first.")
+            return []
+
+        if not os.path.exists(mapping_file):
+            print(f"Warning: {mapping_file} not found. Run create_station_mapping.py first.")
+            return []
+
+        # Load station coordinates
+        stations_df = pd.read_csv(station_file)
+        # Load station code mapping
+        mapping_df = pd.read_csv(mapping_file)
+
+        # Create a mapping from station name to codes
+        name_to_codes = {}
+        for _, row in mapping_df.iterrows():
+            name = row['station_name'].upper()
+            code = row['station_code']
+            if name not in name_to_codes:
+                name_to_codes[name] = []
+            name_to_codes[name].append(code)
+
+        # Match stations with their codes
+        train_stations = []
+        for _, station in stations_df.iterrows():
+            station_name = station['STN_NAM_DE'].replace(' MRT STATION', '').replace(' LRT STATION', '').upper().strip()
+
+            # Find matching codes
+            codes = name_to_codes.get(station_name, [])
+
+            if codes:
+                # Create an entry for each station code
+                for code in codes:
+                    train_stations.append({
+                        'station_code': code,
+                        'station_name': station['STN_NAM_DE'],
+                        'latitude': station['latitude'],
+                        'longitude': station['longitude'],
+                        'station_type': station.get('TYP_CD_DES', 'MRT')
+                    })
+
+        print(f"Loaded {len(train_stations)} train stations")
+        return train_stations
+
+    def get_train_lines(self) -> List[Dict[str, Any]]:
+        """Load train line definitions from static CSV file.
+
+        Returns:
+            List of train line dictionaries
+        """
+        print("\n=== Loading Train Lines ===")
+        lines_file = os.path.join("static_data", "train_lines.csv")
+
+        if not os.path.exists(lines_file):
+            print(f"Warning: {lines_file} not found. Run generate_train_data.py first.")
+            return []
+
+        df = pd.read_csv(lines_file)
+        print(f"Loaded {len(df)} train lines")
+        return df.to_dict('records')
+
+    def get_train_routes(self) -> List[Dict[str, Any]]:
+        """Load train route sequences from static CSV file.
+
+        Returns:
+            List of train route stop sequences
+        """
+        print("\n=== Loading Train Routes ===")
+        routes_file = os.path.join("static_data", "train_routes.csv")
+
+        if not os.path.exists(routes_file):
+            print(f"Warning: {routes_file} not found. Run generate_train_data.py first.")
+            return []
+
+        df = pd.read_csv(routes_file)
+        print(f"Loaded {len(df)} train route stops")
+        return df.to_dict('records')
